@@ -17,7 +17,9 @@ limitations under the License.
 package scheduling
 
 import (
+	"context"
 	"fmt"
+	"sigs.k8s.io/karpenter/pkg/operator/options"
 	"strings"
 	"sync/atomic"
 
@@ -64,7 +66,7 @@ func NewNodeClaim(nodeClaimTemplate *NodeClaimTemplate, topology *Topology, daem
 	}
 }
 
-func (n *NodeClaim) Add(pod *v1.Pod, podRequests v1.ResourceList) error {
+func (n *NodeClaim) Add(ctx context.Context, pod *v1.Pod, podRequests v1.ResourceList) error {
 	// Check Taints
 	if err := scheduling.Taints(n.Spec.Taints).Tolerates(pod); err != nil {
 		return err
@@ -76,7 +78,8 @@ func (n *NodeClaim) Add(pod *v1.Pod, podRequests v1.ResourceList) error {
 		return fmt.Errorf("checking host port usage, %w", err)
 	}
 	nodeClaimRequirements := scheduling.NewRequirements(n.Requirements.Values()...)
-	podRequirements := scheduling.NewPodRequirements(pod)
+	ignoredNodeSelectors := options.FromContext(ctx).IgnoredNodeSelectorRequirements.Keys
+	podRequirements := scheduling.NewPodRequirements(pod, ignoredNodeSelectors)
 
 	// Check NodeClaim Affinity Requirements
 	if err := nodeClaimRequirements.Compatible(podRequirements, scheduling.AllowUndefinedWellKnownLabels); err != nil {
@@ -88,7 +91,7 @@ func (n *NodeClaim) Add(pod *v1.Pod, podRequests v1.ResourceList) error {
 	if scheduling.HasPreferredNodeAffinity(pod) {
 		// strictPodRequirements is important as it ensures we don't inadvertently restrict the possible pod domains by a
 		// preferred node affinity.  Only required node affinities can actually reduce pod domains.
-		strictPodRequirements = scheduling.NewStrictPodRequirements(pod)
+		strictPodRequirements = scheduling.NewStrictPodRequirements(pod, ignoredNodeSelectors)
 	}
 	// Check Topology Requirements
 	topologyRequirements, err := n.topology.AddRequirements(strictPodRequirements, nodeClaimRequirements, pod, scheduling.AllowUndefinedWellKnownLabels)
@@ -103,7 +106,7 @@ func (n *NodeClaim) Add(pod *v1.Pod, podRequests v1.ResourceList) error {
 	// Check instance type combinations
 	requests := resources.Merge(n.Spec.Resources.Requests, podRequests)
 
-	filtered := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, requests)
+	filtered := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, requests, options.FromContext(ctx).IgnoredResourceRequests.Keys)
 
 	if len(filtered.remaining) == 0 {
 		// log the total resources being requested (daemonset + the pod)
@@ -245,7 +248,7 @@ func (r filterResults) FailureReason() string {
 }
 
 //nolint:gocyclo
-func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, requests v1.ResourceList) filterResults {
+func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, requests, ignored v1.ResourceList) filterResults {
 	results := filterResults{
 		requests:        requests,
 		requirementsMet: false,
@@ -261,7 +264,7 @@ func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceTy
 		// the tradeoff to not short circuiting on the filtering is that we can report much better error messages
 		// about why scheduling failed
 		itCompat := compatible(it, requirements)
-		itFits := fits(it, requests)
+		itFits := fits(it, requests, ignored)
 		itHasOffering := it.Offerings.Available().HasCompatible(requirements)
 
 		// track if any single instance type met a single criteria
@@ -296,6 +299,6 @@ func compatible(instanceType *cloudprovider.InstanceType, requirements schedulin
 	return instanceType.Requirements.Intersects(requirements) == nil
 }
 
-func fits(instanceType *cloudprovider.InstanceType, requests v1.ResourceList) bool {
-	return resources.Fits(requests, instanceType.Allocatable())
+func fits(instanceType *cloudprovider.InstanceType, requests, ignored v1.ResourceList) bool {
+	return resources.Fits(requests, instanceType.Allocatable(), ignored)
 }

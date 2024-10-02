@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
+
 	"github.com/imdario/mergo"
 	"github.com/samber/lo"
 
@@ -44,6 +46,7 @@ type OptionsFields struct {
 	BatchMaxDuration        *time.Duration
 	BatchIdleDuration       *time.Duration
 	FeatureGates            FeatureGates
+	IgnoredResourceRequests *options.IgnoredResourceRequests
 }
 
 type FeatureGates struct {
@@ -77,5 +80,8 @@ func Options(overrides ...OptionsFields) *options.Options {
 			NodeRepair:              lo.FromPtrOr(opts.FeatureGates.NodeRepair, false),
 			SpotToSpotConsolidation: lo.FromPtrOr(opts.FeatureGates.SpotToSpotConsolidation, false),
 		},
+		IgnoredResourceRequests: lo.FromPtrOr(opts.IgnoredResourceRequests, options.IgnoredResourceRequests{
+			Keys: make(v1.ResourceList),
+		}),
 	}
 }
