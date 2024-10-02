@@ -21,8 +21,13 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"os"
+	"strings"
 	"time"
+
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	"github.com/samber/lo"
 	cliflag "k8s.io/component-base/cli/flag"
@@ -54,6 +59,16 @@ type FeatureGates struct {
 	SpotToSpotConsolidation bool
 }
 
+type IgnoredResourceRequests struct {
+	Keys     v1.ResourceList
+	inputStr string
+}
+
+type IgnoredNodeSelectorPatterns struct {
+	Keys     sets.Set[string]
+	inputStr string
+}
+
 // Options contains all CLI flags / env vars for karpenter-core. It adheres to the options.Injectable interface.
 type Options struct {
 	ServiceName             string
@@ -75,6 +90,8 @@ type Options struct {
 	preferencePolicyRaw     string
 	PreferencePolicy        PreferencePolicy
 	FeatureGates            FeatureGates
+	IgnoredResourceRequests         IgnoredResourceRequests
+	IgnoredNodeSelectorRequirements IgnoredNodeSelectorPatterns
 }
 
 type FlagSet struct {
@@ -113,6 +130,8 @@ func (o *Options) AddFlags(fs *FlagSet) {
 	fs.DurationVar(&o.BatchIdleDuration, "batch-idle-duration", env.WithDefaultDuration("BATCH_IDLE_DURATION", time.Second), "The maximum amount of time with no new pending pods that if exceeded ends the current batching window. If pods arrive faster than this time, the batching window will be extended up to the maxDuration. If they arrive slower, the pods will be batched separately.")
 	fs.StringVar(&o.preferencePolicyRaw, "preference-policy", env.WithDefaultString("PREFERENCE_POLICY", string(PreferencePolicyRespect)), "How the Karpenter scheduler should treat preferences. Preferences include preferredDuringSchedulingIgnoreDuringExecution node and pod affinities/anti-affinities and ScheduleAnyways topologySpreadConstraints. Can be one of 'Ignore' and 'Respect'")
 	fs.StringVar(&o.FeatureGates.inputStr, "feature-gates", env.WithDefaultString("FEATURE_GATES", "NodeRepair=false,ReservedCapacity=false,SpotToSpotConsolidation=false"), "Optional features can be enabled / disabled using feature gates. Current options are: NodeRepair, ReservedCapacity, and SpotToSpotConsolidation")
+	fs.StringVar(&o.IgnoredResourceRequests.inputStr, "ignored-resource-requests", env.WithDefaultString("IGNORED_RESOURCE_REQUESTS", ""), "List of resource requests ignored when electing a resource. Items are comma-separated.")
+	fs.StringVar(&o.IgnoredNodeSelectorRequirements.inputStr, "ignored-node-selector-requirements", env.WithDefaultString("IGNORED_NODE_SELECTOR_REQUIREMENTS", ""), "List of node selector requirements ignored when electing a resource. Items are comma-separated.")
 }
 
 func (o *Options) Parse(fs *FlagSet, args ...string) error {
@@ -137,6 +156,10 @@ func (o *Options) Parse(fs *FlagSet, args ...string) error {
 	}
 	o.FeatureGates = gates
 	o.PreferencePolicy = PreferencePolicy(o.preferencePolicyRaw)
+
+	o.IgnoredResourceRequests = ParseIgnoredResourceRequests(o.IgnoredResourceRequests.inputStr)
+	o.IgnoredNodeSelectorRequirements = ParseIgnoredNodeSelectorRequirements(o.IgnoredNodeSelectorRequirements.inputStr)
+
 	return nil
 }
 
@@ -164,6 +187,32 @@ func ParseFeatureGates(gateStr string) (FeatureGates, error) {
 	}
 
 	return gates, nil
+}
+
+func ParseIgnoredResourceRequests(inputStr string) IgnoredResourceRequests {
+	ignoredResourceRequests := strings.Split(inputStr, ",")
+	keys := make(v1.ResourceList)
+
+	// NOTE: Dummy value as quantity, resource request filtering is happening only against the key we want to ignore.
+	q, _ := resource.ParseQuantity("1")
+	for _, v := range ignoredResourceRequests {
+		keys[v1.ResourceName(v)] = q
+	}
+
+	return IgnoredResourceRequests{
+		Keys:     keys,
+		inputStr: inputStr,
+	}
+}
+
+func ParseIgnoredNodeSelectorRequirements(inputStr string) IgnoredNodeSelectorPatterns {
+	rawPatterns := strings.Split(inputStr, ",")
+	patterns := sets.New(rawPatterns...)
+
+	return IgnoredNodeSelectorPatterns{
+		Keys:     patterns,
+		inputStr: inputStr,
+	}
 }
 
 func ToContext(ctx context.Context, opts *Options) context.Context {

@@ -32,6 +32,7 @@ import (
 	"go.uber.org/multierr"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
@@ -477,7 +478,7 @@ func (p *Provisioner) Validate(ctx context.Context, pod *corev1.Pod) error {
 // validateKarpenterManagedLabelCanExist provides a more clear error message in the event of scheduling a pod that specifically doesn't
 // want to run on a Karpenter node (e.g. a Karpenter controller replica).
 func validateKarpenterManagedLabelCanExist(p *corev1.Pod) error {
-	for _, req := range scheduling.NewPodRequirements(p) {
+	for _, req := range scheduling.NewPodRequirements(p, sets.Set[string]{}) {
 		if req.Key == v1.NodePoolLabelKey && req.Operator() == corev1.NodeSelectorOpDoesNotExist {
 			return serrors.Wrap(fmt.Errorf("configured to not run on a Karpenter provisioned node"), "requirement", fmt.Sprintf("%s %s", v1.NodePoolLabelKey, corev1.NodeSelectorOpDoesNotExist))
 		}
