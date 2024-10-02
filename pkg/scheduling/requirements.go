@@ -17,7 +17,10 @@ limitations under the License.
 package scheduling
 
 import (
+	"context"
 	"fmt"
+	"path/filepath"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 	"slices"
 	"sort"
 	"strings"
@@ -71,13 +74,13 @@ func NewLabelRequirements(labels map[string]string) Requirements {
 }
 
 // NewPodRequirements constructs requirements from a pod and treats any preferred requirements as required.
-func NewPodRequirements(pod *corev1.Pod) Requirements {
-	return newPodRequirements(pod, podRequirementTypeAll)
+func NewPodRequirements(pod *corev1.Pod, ignoredNodeSelectorPatterns sets.Set[string]) Requirements {
+	return newPodRequirements(pod, podRequirementTypeAll, ignoredNodeSelectorPatterns)
 }
 
 // NewStrictPodRequirements constructs requirements from a pod and only includes true requirements (not preferences).
-func NewStrictPodRequirements(pod *corev1.Pod) Requirements {
-	return newPodRequirements(pod, podRequirementTypeRequiredOnly)
+func NewStrictPodRequirements(pod *corev1.Pod, ignoredNodeSelectorPatterns sets.Set[string]) Requirements {
+	return newPodRequirements(pod, podRequirementTypeRequiredOnly, ignoredNodeSelectorPatterns)
 }
 
 type podRequirementType byte
@@ -87,8 +90,18 @@ const (
 	podRequirementTypeRequiredOnly
 )
 
-func newPodRequirements(pod *corev1.Pod, typ podRequirementType) Requirements {
+func newPodRequirements(pod *corev1.Pod, typ podRequirementType, ignoredNodeSelectorPatterns sets.Set[string]) Requirements {
 	requirements := NewLabelRequirements(pod.Spec.NodeSelector)
+
+	for key := range requirements.Keys() {
+		for pattern := range ignoredNodeSelectorPatterns {
+			if match, _ := filepath.Match(pattern, key); match {
+				log.FromContext(context.Background()).Info(fmt.Sprintf("Pattern matched '%s' for node selector '%s'", pattern, key))
+				delete(requirements, key)
+			}
+		}
+	}
+
 	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil {
 		return requirements
 	}

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"sort"
 	"time"
 
@@ -273,7 +274,7 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 
 	// Pick existing node that we are about to create
 	for _, nodeClaim := range s.newNodeClaims {
-		if err := nodeClaim.Add(pod); err == nil {
+		if err := nodeClaim.Add(ctx, pod); err == nil {
 			return nil
 		}
 	}
@@ -295,7 +296,7 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 			}
 		}
 		nodeClaim := NewNodeClaim(nodeClaimTemplate, s.topology, s.daemonOverhead[nodeClaimTemplate], instanceTypes)
-		if err := nodeClaim.Add(pod); err != nil {
+		if err := nodeClaim.Add(ctx, pod); err != nil {
 			errs = multierr.Append(errs, fmt.Errorf("incompatible with nodepool %q, daemonset overhead=%s, %w",
 				nodeClaimTemplate.NodePoolName,
 				resources.String(s.daemonOverhead[nodeClaimTemplate]),
@@ -319,7 +320,7 @@ func (s *Scheduler) calculateExistingNodeClaims(stateNodes []*state.StateNode, d
 			if err := scheduling.Taints(node.Taints()).Tolerates(p); err != nil {
 				continue
 			}
-			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodRequirements(p)); err != nil {
+			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodRequirements(p, sets.Set[string]{})); err != nil {
 				continue
 			}
 			daemons = append(daemons, p)
@@ -356,7 +357,7 @@ func getDaemonOverhead(nodeClaimTemplates []*NodeClaimTemplate, daemonSetPods []
 			if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).Tolerates(p); err != nil {
 				continue
 			}
-			if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
+			if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p, sets.Set[string]{}), scheduling.AllowUndefinedWellKnownLabels); err != nil {
 				continue
 			}
 			daemons = append(daemons, p)

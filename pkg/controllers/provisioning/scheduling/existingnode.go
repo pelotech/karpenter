@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	"sigs.k8s.io/karpenter/pkg/operator/options"
+
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -84,12 +86,14 @@ func (n *ExistingNode) Add(ctx context.Context, kubeClient client.Client, pod *v
 	// node, which at this point can't be increased in size
 	requests := resources.Merge(n.requests, resources.RequestsForPods(pod))
 
-	if !resources.Fits(requests, n.Available()) {
+	if !resources.Fits(requests, n.Available(), options.FromContext(ctx).IgnoredResourceRequests.Keys) {
 		return fmt.Errorf("exceeds node resources")
 	}
 
 	nodeRequirements := scheduling.NewRequirements(n.requirements.Values()...)
-	podRequirements := scheduling.NewPodRequirements(pod)
+	ignoredNodeSelectors := options.FromContext(ctx).IgnoredNodeSelectorRequirements.Keys
+	podRequirements := scheduling.NewPodRequirements(pod, ignoredNodeSelectors)
+
 	// Check NodeClaim Affinity Requirements
 	if err = nodeRequirements.Compatible(podRequirements); err != nil {
 		return err
@@ -100,7 +104,7 @@ func (n *ExistingNode) Add(ctx context.Context, kubeClient client.Client, pod *v
 	if scheduling.HasPreferredNodeAffinity(pod) {
 		// strictPodRequirements is important as it ensures we don't inadvertently restrict the possible pod domains by a
 		// preferred node affinity.  Only required node affinities can actually reduce pod domains.
-		strictPodRequirements = scheduling.NewStrictPodRequirements(pod)
+		strictPodRequirements = scheduling.NewStrictPodRequirements(pod, ignoredNodeSelectors)
 	}
 
 	// Check Topology Requirements
