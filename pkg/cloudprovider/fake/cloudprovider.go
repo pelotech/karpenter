@@ -23,6 +23,7 @@ import (
 	"sort"
 	"sync"
 	"time"
+	"sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/awslabs/operatorpkg/status"
@@ -135,7 +136,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v
 		if !i.Offerings.Available().HasCompatible(reqs) {
 			return false
 		}
-		if !resources.Fits(nodeClaim.Spec.Resources.Requests, i.Allocatable()) {
+		if !resources.Fits(nodeClaim.Spec.Resources.Requests, i.Allocatable(), options.FromContext(ctx).IgnoredResourceRequests.Keys) {
 			return false
 		}
 		return true
