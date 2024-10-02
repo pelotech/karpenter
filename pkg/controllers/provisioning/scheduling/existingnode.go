@@ -20,6 +20,8 @@ import (
 	"context"
 	"fmt"
 
+	opts "sigs.k8s.io/karpenter/pkg/operator/options"
+
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -88,7 +90,7 @@ func (n *ExistingNode) Add(ctx context.Context, kubeClient client.Client, pod *v
 	// node, which at this point can't be increased in size
 	requests := resources.Merge(n.requests, podData.Requests)
 
-	if !resources.Fits(requests, n.cachedAvailable) {
+	if !resources.Fits(requests, n.cachedAvailable, opts.FromContext(ctx).IgnoredResourceRequests.Keys) {
 		return fmt.Errorf("exceeds node resources")
 	}
 

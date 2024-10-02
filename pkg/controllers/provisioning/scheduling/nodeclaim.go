@@ -140,7 +140,7 @@ func (n *NodeClaim) Add(ctx context.Context, pod *corev1.Pod, podData *PodData) 
 	// Check instance type combinations
 	requests := resources.Merge(n.Spec.Resources.Requests, podData.Requests)
 
-	remaining, err := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, podData.Requests, n.daemonResources, requests)
+	remaining, err := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, podData.Requests, n.daemonResources, requests, opts.FromContext(ctx).IgnoredResourceRequests.Keys)
 	if err != nil {
 		// We avoid wrapping this err because calling String() on InstanceTypeFilterError is an expensive operation
 		// due to calls to resources.Merge and stringifying the nodeClaimRequirements
@@ -360,7 +360,7 @@ func (e InstanceTypeFilterError) Error() string {
 }
 
 //nolint:gocyclo
-func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, podRequests, daemonRequests, totalRequests corev1.ResourceList) (cloudprovider.InstanceTypes, error) {
+func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, podRequests, daemonRequests, totalRequests corev1.ResourceList, ignored corev1.ResourceList) (cloudprovider.InstanceTypes, error) {
 	// We hold the results of our scheduling simulation inside of this InstanceTypeFilterError struct
 	// to reduce the CPU load of having to generate the error string for a failed scheduling simulation
 	err := InstanceTypeFilterError{
@@ -382,7 +382,7 @@ func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceTy
 		// the tradeoff to not short-circuiting on the filtering is that we can report much better error messages
 		// about why scheduling failed
 		itCompat := compatible(it, requirements)
-		itFits := fits(it, totalRequests)
+		itFits := fits(it, totalRequests, ignored)
 
 		// By using this iterative approach vs. the Available() function it prevents allocations
 		// which have to be garbage collected and slow down Karpenter's scheduling algorithm
@@ -429,6 +429,6 @@ func compatible(instanceType *cloudprovider.InstanceType, requirements schedulin
 	return instanceType.Requirements.Intersects(requirements) == nil
 }
 
-func fits(instanceType *cloudprovider.InstanceType, requests corev1.ResourceList) bool {
-	return resources.Fits(requests, instanceType.Allocatable())
+func fits(instanceType *cloudprovider.InstanceType, requests corev1.ResourceList, ignored corev1.ResourceList) bool {
+	return resources.Fits(requests, instanceType.Allocatable(), ignored)
 }

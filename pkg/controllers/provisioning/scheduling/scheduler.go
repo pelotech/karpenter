@@ -20,6 +20,9 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/sets"
+	opts "sigs.k8s.io/karpenter/pkg/operator/options"
 	"sort"
 	"time"
 
@@ -103,7 +106,7 @@ func NewScheduler(
 	// Pre-filter instance types eligible for NodePools to reduce work done during scheduling loops for pods
 	templates := lo.FilterMap(nodePools, func(np *v1.NodePool, _ int) (*NodeClaimTemplate, bool) {
 		nct := NewNodeClaimTemplate(np)
-		nct.InstanceTypeOptions, _ = filterInstanceTypesByRequirements(instanceTypes[np.Name], nct.Requirements, corev1.ResourceList{}, corev1.ResourceList{}, corev1.ResourceList{})
+		nct.InstanceTypeOptions, _ = filterInstanceTypesByRequirements(instanceTypes[np.Name], nct.Requirements, corev1.ResourceList{}, corev1.ResourceList{}, corev1.ResourceList{}, map[corev1.ResourceName]resource.Quantity{})
 		if len(nct.InstanceTypeOptions) == 0 {
 			recorder.Publish(NoCompatibleInstanceTypes(np))
 			log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Info("skipping, nodepool requirements filtered out all instance types")
@@ -277,8 +280,10 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*corev1.Pod) Results {
 	// Reset the metric for the controller, so we don't keep old ids around
 	UnschedulablePodsCount.DeletePartialMatch(map[string]string{ControllerLabel: injection.GetControllerName(ctx)})
 	QueueDepth.DeletePartialMatch(map[string]string{ControllerLabel: injection.GetControllerName(ctx)})
+
+	ignoredNodeSelectors := opts.FromContext(ctx).IgnoredNodeSelectorRequirements.Keys
 	for _, p := range pods {
-		s.updateCachedPodData(p)
+		s.updateCachedPodData(p, ignoredNodeSelectors)
 	}
 	q := NewQueue(pods, s.cachedPodData)
 
@@ -316,7 +321,7 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*corev1.Pod) Results {
 					log.FromContext(ctx).Error(err, "failed updating topology")
 				}
 				// Update the cached podData since the pod was relaxed and it could have changed its requirement set
-				s.updateCachedPodData(pod)
+				s.updateCachedPodData(pod, ignoredNodeSelectors)
 			}
 		}
 		q.Push(pod, relaxed)
@@ -333,13 +338,13 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*corev1.Pod) Results {
 	}
 }
 
-func (s *Scheduler) updateCachedPodData(p *corev1.Pod) {
-	requirements := scheduling.NewPodRequirements(p)
+func (s *Scheduler) updateCachedPodData(p *corev1.Pod, ignoredNodeSelectors sets.Set[string]) {
+	requirements := scheduling.NewPodRequirements(p, ignoredNodeSelectors)
 	strictRequirements := requirements
 	if scheduling.HasPreferredNodeAffinity(p) {
 		// strictPodRequirements is important as it ensures we don't inadvertently restrict the possible pod domains by a
 		// preferred node affinity.  Only required node affinities can actually reduce pod domains.
-		strictRequirements = scheduling.NewStrictPodRequirements(p)
+		strictRequirements = scheduling.NewStrictPodRequirements(p, ignoredNodeSelectors)
 	}
 	s.cachedPodData[p.UID] = &PodData{
 		Requests:           resources.RequestsForPods(p),
@@ -429,7 +434,7 @@ func (s *Scheduler) calculateExistingNodeClaims(stateNodes []*state.StateNode, d
 			if err := scheduling.Taints(taints).ToleratesPod(p); err != nil {
 				continue
 			}
-			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodRequirements(p)); err != nil {
+			if err := scheduling.NewLabelRequirements(node.Labels()).Compatible(scheduling.NewPodRequirements(p, sets.Set[string]{})); err != nil {
 				continue
 			}
 			daemons = append(daemons, p)
@@ -474,7 +479,7 @@ func isDaemonPodCompatible(nodeClaimTemplate *NodeClaimTemplate, pod *corev1.Pod
 	}
 	for {
 		// We don't consider pod preferences for scheduling requirements since we know that pod preferences won't matter with Daemonset scheduling
-		if nodeClaimTemplate.Requirements.IsCompatible(scheduling.NewStrictPodRequirements(pod), scheduling.AllowUndefinedWellKnownLabels) {
+		if nodeClaimTemplate.Requirements.IsCompatible(scheduling.NewStrictPodRequirements(pod, sets.Set[string]{}), scheduling.AllowUndefinedWellKnownLabels) {
 			return true
 		}
 		// If relaxing the Node Affinity term didn't succeed, then this DaemonSet can't schedule to this NodePool
