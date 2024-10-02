@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/karpenter/pkg/test/v1alpha1"
 
 	"github.com/awslabs/operatorpkg/status"
+	"sigs.k8s.io/karpenter/pkg/operator/options"
 
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
@@ -116,7 +117,7 @@ func (c *CloudProvider) Create(ctx context.Context, nodeClaim *v1.NodeClaim) (*v
 	instanceTypes := lo.Filter(lo.Must(c.GetInstanceTypes(ctx, np)), func(i *cloudprovider.InstanceType, _ int) bool {
 		return reqs.IsCompatible(i.Requirements, scheduling.AllowUndefinedWellKnownLabels) &&
 			i.Offerings.Available().HasCompatible(reqs) &&
-			resources.Fits(nodeClaim.Spec.Resources.Requests, i.Allocatable())
+			resources.Fits(nodeClaim.Spec.Resources.Requests, i.Allocatable(), options.FromContext(ctx).IgnoredResourceRequests.Keys)
 	})
 	// Order instance types so that we get the cheapest instance types of the available offerings
 	sort.Slice(instanceTypes, func(i, j int) bool {
