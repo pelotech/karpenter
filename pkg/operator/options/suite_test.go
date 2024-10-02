@@ -23,6 +23,9 @@ import (
 	"testing"
 	"time"
 
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
@@ -62,6 +65,7 @@ var _ = Describe("Options", func() {
 		"BATCH_MAX_DURATION",
 		"BATCH_IDLE_DURATION",
 		"FEATURE_GATES",
+		"IGNORED_RESOURCE_REQUESTS",
 	}
 
 	BeforeEach(func() {
@@ -117,6 +121,9 @@ var _ = Describe("Options", func() {
 				FeatureGates: test.FeatureGates{
 					SpotToSpotConsolidation: lo.ToPtr(false),
 				},
+				IgnoredResourceRequests: &options.IgnoredResourceRequests{
+					Keys: make(v1.ResourceList),
+				},
 			}))
 		})
 
@@ -142,6 +149,7 @@ var _ = Describe("Options", func() {
 				"--batch-max-duration", "5s",
 				"--batch-idle-duration", "5s",
 				"--feature-gates", "SpotToSpotConsolidation=true",
+				"--ignored-resource-requests", "devices.kubevirt.io/tun,devices.kubevirt.io/kvm",
 			)
 			Expect(err).To(BeNil())
 			expectOptionsMatch(opts, test.Options(test.OptionsFields{
@@ -164,6 +172,10 @@ var _ = Describe("Options", func() {
 				FeatureGates: test.FeatureGates{
 					SpotToSpotConsolidation: lo.ToPtr(true),
 				},
+				IgnoredResourceRequests: &options.IgnoredResourceRequests{Keys: v1.ResourceList{
+					"devices.kubevirt.io/tun": resource.MustParse("1"),
+					"devices.kubevirt.io/kvm": resource.MustParse("1"),
+				}},
 			}))
 		})
 
@@ -185,6 +197,7 @@ var _ = Describe("Options", func() {
 			os.Setenv("BATCH_MAX_DURATION", "5s")
 			os.Setenv("BATCH_IDLE_DURATION", "5s")
 			os.Setenv("FEATURE_GATES", "SpotToSpotConsolidation=true")
+			os.Setenv("IGNORED_RESOURCE_REQUESTS", "devices.kubevirt.io/tun")
 			fs = &options.FlagSet{
 				FlagSet: flag.NewFlagSet("karpenter", flag.ContinueOnError),
 			}
@@ -211,6 +224,7 @@ var _ = Describe("Options", func() {
 				FeatureGates: test.FeatureGates{
 					SpotToSpotConsolidation: lo.ToPtr(true),
 				},
+				IgnoredResourceRequests: &options.IgnoredResourceRequests{Keys: v1.ResourceList{}},
 			}))
 		})
 
@@ -258,6 +272,9 @@ var _ = Describe("Options", func() {
 				BatchIdleDuration:     lo.ToPtr(5 * time.Second),
 				FeatureGates: test.FeatureGates{
 					SpotToSpotConsolidation: lo.ToPtr(true),
+				},
+				IgnoredResourceRequests: &options.IgnoredResourceRequests{
+					Keys: make(v1.ResourceList),
 				},
 			}))
 		})
