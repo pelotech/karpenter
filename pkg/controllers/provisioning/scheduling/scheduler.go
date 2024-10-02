@@ -273,7 +273,7 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 
 	// Pick existing node that we are about to create
 	for _, nodeClaim := range s.newNodeClaims {
-		if err := nodeClaim.Add(pod); err == nil {
+		if err := nodeClaim.Add(ctx, pod); err == nil {
 			return nil
 		}
 	}
@@ -295,7 +295,7 @@ func (s *Scheduler) add(ctx context.Context, pod *corev1.Pod) error {
 			}
 		}
 		nodeClaim := NewNodeClaim(nodeClaimTemplate, s.topology, s.daemonOverhead[nodeClaimTemplate], instanceTypes)
-		if err := nodeClaim.Add(pod); err != nil {
+		if err := nodeClaim.Add(ctx, pod); err != nil {
 			errs = multierr.Append(errs, fmt.Errorf("incompatible with nodepool %q, daemonset overhead=%s, %w",
 				nodeClaimTemplate.NodePoolName,
 				resources.String(s.daemonOverhead[nodeClaimTemplate]),
