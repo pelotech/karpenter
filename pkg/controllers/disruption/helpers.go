@@ -24,14 +24,17 @@ import (
 	"github.com/samber/lo"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
+	"sigs.k8s.io/karpenter/pkg/operator/options"
+
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	"sigs.k8s.io/karpenter/pkg/cloudprovider"
 	disruptionevents "sigs.k8s.io/karpenter/pkg/controllers/disruption/events"
-	"sigs.k8s.io/karpenter/pkg/controllers/disruption/orchestration"
+	"sigs.k8s.io/karpenter/pkg/controllers/nodeoverlay"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning"
 	"sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
 	"sigs.k8s.io/karpenter/pkg/controllers/state"
@@ -50,7 +53,7 @@ func SimulateScheduling(ctx context.Context, kubeClient client.Client, cluster *
 	candidates ...*Candidate,
 ) (scheduling.Results, error) {
 	candidateNames := sets.NewString(lo.Map(candidates, func(t *Candidate, i int) string { return t.Name() })...)
-	nodes := cluster.Nodes()
+	nodes := cluster.DeepCopyNodes()
 	deletingNodes := nodes.Deleting()
 	stateNodes := lo.Filter(nodes.Active(), func(n *state.StateNode, _ int) bool {
 		return !candidateNames.Has(n.Name())
@@ -65,21 +68,44 @@ func SimulateScheduling(ctx context.Context, kubeClient client.Client, cluster *
 		return scheduling.Results{}, errCandidateDeleting
 	}
 
-	// We get the pods that are on nodes that are deleting
-	deletingNodePods, err := deletingNodes.ReschedulablePods(ctx, kubeClient)
-	if err != nil {
-		return scheduling.Results{}, fmt.Errorf("failed to get pods from deleting nodes, %w", err)
-	}
 	// start by getting all pending pods
 	pods, err := provisioner.GetPendingPods(ctx)
 	if err != nil {
 		return scheduling.Results{}, fmt.Errorf("determining pending pods, %w", err)
 	}
+
+	// Don't provision capacity for pods which will not get evicted due to fully blocking PDBs.
+	// Since Karpenter doesn't know when these pods will be successfully evicted, spinning up capacity until
+	// these pods are evicted is wasteful.
+	pdbs, err := pdb.NewLimits(ctx, kubeClient)
+	if err != nil {
+		return scheduling.Results{}, fmt.Errorf("tracking PodDisruptionBudgets, %w", err)
+	}
 	for _, n := range candidates {
-		pods = append(pods, n.reschedulablePods...)
+		currentlyReschedulablePods := lo.Filter(n.reschedulablePods, func(p *corev1.Pod, _ int) bool {
+			return pdbs.IsCurrentlyReschedulable(p)
+		})
+		pods = append(pods, currentlyReschedulablePods...)
+	}
+
+	// We get the pods that are on nodes that are deleting
+	deletingNodePods, err := deletingNodes.CurrentlyReschedulablePods(ctx, kubeClient)
+	if err != nil {
+		return scheduling.Results{}, fmt.Errorf("failed to get pods from deleting nodes, %w", err)
 	}
 	pods = append(pods, deletingNodePods...)
-	scheduler, err := provisioner.NewScheduler(log.IntoContext(ctx, operatorlogging.NopLogger), pods, stateNodes)
+
+	var opts []scheduling.Options
+	if options.FromContext(ctx).PreferencePolicy == options.PreferencePolicyIgnore {
+		opts = append(opts, scheduling.IgnorePreferences)
+	}
+	opts = append(opts, scheduling.MinValuesPolicy(options.FromContext(ctx).MinValuesPolicy))
+	scheduler, err := provisioner.NewScheduler(
+		log.IntoContext(ctx, operatorlogging.NopLogger),
+		pods,
+		stateNodes,
+		opts...,
+	)
 	if err != nil {
 		return scheduling.Results{}, fmt.Errorf("creating scheduler, %w", err)
 	}
@@ -92,7 +118,7 @@ func SimulateScheduling(ctx context.Context, kubeClient client.Client, cluster *
 	if err != nil {
 		return scheduling.Results{}, fmt.Errorf("scheduling pods, %w", err)
 	}
-	results = results.TruncateInstanceTypes(scheduling.MaxInstanceTypes)
+	results = results.TruncateInstanceTypes(ctx, scheduling.MaxInstanceTypes)
 	for _, n := range results.ExistingNodes {
 		// We consider existing nodes for scheduling. When these nodes are unmanaged, their taint logic should
 		// tell us if we can schedule to them or not; however, if these nodes are managed, we will still schedule to them
@@ -146,17 +172,17 @@ func instanceTypesAreSubset(lhs []*cloudprovider.InstanceType, rhs []*cloudprovi
 
 // GetCandidates returns nodes that appear to be currently deprovisionable based off of their nodePool
 func GetCandidates(ctx context.Context, cluster *state.Cluster, kubeClient client.Client, recorder events.Recorder, clk clock.Clock,
-	cloudProvider cloudprovider.CloudProvider, shouldDisrupt CandidateFilter, disruptionClass string, queue *orchestration.Queue,
+	cloudProvider cloudprovider.CloudProvider, shouldDisrupt CandidateFilter, disruptionClass string, queue *Queue,
 ) ([]*Candidate, error) {
 	nodePoolMap, nodePoolToInstanceTypesMap, err := BuildNodePoolMap(ctx, kubeClient, cloudProvider)
 	if err != nil {
 		return nil, err
 	}
-	pdbs, err := pdb.NewLimits(ctx, clk, kubeClient)
+	pdbs, err := pdb.NewLimits(ctx, kubeClient)
 	if err != nil {
 		return nil, fmt.Errorf("tracking PodDisruptionBudgets, %w", err)
 	}
-	candidates := lo.FilterMap(cluster.Nodes(), func(n *state.StateNode, _ int) (*Candidate, bool) {
+	candidates := lo.FilterMap(cluster.DeepCopyNodes(), func(n *state.StateNode, _ int) (*Candidate, bool) {
 		cn, e := NewCandidate(ctx, kubeClient, recorder, clk, n, pdbs, nodePoolMap, nodePoolToInstanceTypesMap, queue, disruptionClass)
 		return cn, e == nil
 	})
@@ -178,6 +204,10 @@ func BuildNodePoolMap(ctx context.Context, kubeClient client.Client, cloudProvid
 
 		nodePoolInstanceTypes, err := cloudProvider.GetInstanceTypes(ctx, np)
 		if err != nil {
+			if nodeoverlay.IsUnevaluatedNodePoolError(err) {
+				log.FromContext(ctx).WithValues("NodePool", klog.KObj(np)).Error(err, "skipping, node overlies are not applied")
+				continue
+			}
 			// don't error out on building the node pool, we just won't be able to handle any nodes that
 			// were created by it
 			log.FromContext(ctx).Error(err, fmt.Sprintf("failed listing instance types for %s", np.Name))
@@ -202,7 +232,7 @@ func BuildDisruptionBudgetMapping(ctx context.Context, cluster *state.Cluster, c
 	disruptionBudgetMapping := map[string]int{}
 	numNodes := map[string]int{}   // map[nodepool] -> node count in nodepool
 	disrupting := map[string]int{} // map[nodepool] -> nodes undergoing disruption
-	for _, node := range cluster.Nodes() {
+	for _, node := range cluster.DeepCopyNodes() {
 		// We only consider nodes that we own and are initialized towards the total.
 		// If a node is launched/registered, but not initialized, pods aren't scheduled
 		// to the node, and these are treated as unhealthy until they're cleaned up.

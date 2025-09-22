@@ -23,12 +23,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/awslabs/operatorpkg/option"
 	"github.com/samber/lo"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
-	"sigs.k8s.io/karpenter/pkg/controllers/provisioning/scheduling"
 )
 
 var SingleNodeConsolidationTimeoutDuration = 3 * time.Minute
@@ -39,24 +39,25 @@ const SingleNodeConsolidationType = "single"
 type SingleNodeConsolidation struct {
 	consolidation
 	PreviouslyUnseenNodePools sets.Set[string]
+	validator                 Validator
 }
 
-func NewSingleNodeConsolidation(consolidation consolidation) *SingleNodeConsolidation {
+func NewSingleNodeConsolidation(c consolidation, opts ...option.Function[MethodOptions]) *SingleNodeConsolidation {
+	o := option.Resolve(append([]option.Function[MethodOptions]{WithValidator(NewSingleConsolidationValidator(c))}, opts...)...)
 	return &SingleNodeConsolidation{
-		consolidation:             consolidation,
+		consolidation:             c,
 		PreviouslyUnseenNodePools: sets.New[string](),
+		validator:                 o.validator,
 	}
 }
 
 // ComputeCommand generates a disruption command given candidates
 // nolint:gocyclo
-func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[string]int, candidates ...*Candidate) (Command, scheduling.Results, error) {
+func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruptionBudgetMapping map[string]int, candidates ...*Candidate) (Command, error) {
 	if s.IsConsolidated() {
-		return Command{}, scheduling.Results{}, nil
+		return Command{}, nil
 	}
 	candidates = s.SortCandidates(ctx, candidates)
-
-	v := NewValidation(s.clock, s.cluster, s.kubeClient, s.provisioner, s.cloudProvider, s.recorder, s.queue, s.Reason())
 
 	// Set a timeout
 	timeout := s.clock.Now().Add(SingleNodeConsolidationTimeoutDuration)
@@ -65,6 +66,17 @@ func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruption
 	unseenNodePools := sets.New(lo.Map(candidates, func(c *Candidate, _ int) string { return c.NodePool.Name })...)
 
 	for i, candidate := range candidates {
+		if s.clock.Now().After(timeout) {
+			ConsolidationTimeoutsTotal.Inc(map[string]string{ConsolidationTypeLabel: s.ConsolidationType()})
+			log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning single-node consolidation due to timeout after evaluating %d candidates", i))
+
+			s.PreviouslyUnseenNodePools = unseenNodePools
+
+			return Command{}, nil
+		}
+		// Track that we've seen this nodepool
+		unseenNodePools.Delete(candidate.NodePool.Name)
+
 		// If the disruption budget doesn't allow this candidate to be disrupted,
 		// continue to the next candidate. We don't need to decrement any budget
 		// counter since single node consolidation commands can only have one candidate.
@@ -78,20 +90,9 @@ func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruption
 		if len(candidate.reschedulablePods) == 0 {
 			continue
 		}
-		if s.clock.Now().After(timeout) {
-			ConsolidationTimeoutsTotal.Inc(map[string]string{consolidationTypeLabel: s.ConsolidationType()})
-			log.FromContext(ctx).V(1).Info(fmt.Sprintf("abandoning single-node consolidation due to timeout after evaluating %d candidates", i))
-
-			s.PreviouslyUnseenNodePools = unseenNodePools
-
-			return Command{}, scheduling.Results{}, nil
-		}
-
-		// Track that we've seen this nodepool
-		unseenNodePools.Delete(candidate.NodePool.Name)
 
 		// compute a possible consolidation option
-		cmd, results, err := s.computeConsolidation(ctx, candidate)
+		cmd, err := s.computeConsolidation(ctx, candidate)
 		if err != nil {
 			log.FromContext(ctx).Error(err, "failed computing consolidation")
 			continue
@@ -99,14 +100,14 @@ func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruption
 		if cmd.Decision() == NoOpDecision {
 			continue
 		}
-		if err := v.IsValid(ctx, cmd, consolidationTTL); err != nil {
+		if _, err = s.validator.Validate(ctx, cmd, consolidationTTL); err != nil {
 			if IsValidationError(err) {
 				log.FromContext(ctx).V(1).WithValues(cmd.LogValues()...).Info("abandoning single-node consolidation attempt due to pod churn, command is no longer valid")
-				return Command{}, scheduling.Results{}, nil
+				return Command{}, nil
 			}
-			return Command{}, scheduling.Results{}, fmt.Errorf("validating consolidation, %w", err)
+			return Command{}, fmt.Errorf("validating consolidation, %w", err)
 		}
-		return cmd, results, nil
+		return cmd, nil
 	}
 
 	if !constrainedByBudgets {
@@ -118,7 +119,7 @@ func (s *SingleNodeConsolidation) ComputeCommand(ctx context.Context, disruption
 
 	s.PreviouslyUnseenNodePools = unseenNodePools
 
-	return Command{}, scheduling.Results{}, nil
+	return Command{}, nil
 }
 
 func (s *SingleNodeConsolidation) Reason() v1.DisruptionReason {
