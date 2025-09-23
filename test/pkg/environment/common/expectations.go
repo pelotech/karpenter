@@ -1224,7 +1224,7 @@ func (env *Environment) GetDaemonSetCount(np *v1.NodePool) int {
 		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).ToleratesPod(p); err != nil {
 			return false
 		}
-		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
+		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p, sets.Set[string]{}), scheduling.AllowUndefinedWellKnownLabels); err != nil {
 			return false
 		}
 		return true
@@ -1245,7 +1245,7 @@ func (env *Environment) GetDaemonSetOverhead(np *v1.NodePool) corev1.ResourceLis
 		if err := scheduling.Taints(nodeClaimTemplate.Spec.Taints).ToleratesPod(p); err != nil {
 			return nil, false
 		}
-		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p), scheduling.AllowUndefinedWellKnownLabels); err != nil {
+		if err := nodeClaimTemplate.Requirements.Compatible(scheduling.NewPodRequirements(p, sets.Set[string]{}), scheduling.AllowUndefinedWellKnownLabels); err != nil {
 			return nil, false
 		}
 		return p, true
