@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	"github.com/awslabs/operatorpkg/option"
 	"github.com/awslabs/operatorpkg/serrors"
 	"github.com/samber/lo"
@@ -385,8 +387,9 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*corev1.Pod) (Results, err
 	// Reset the metric for the controller, so we don't keep old ids around
 	UnschedulablePodsCount.DeletePartialMatch(map[string]string{ControllerLabel: injection.GetControllerName(ctx)})
 	QueueDepth.DeletePartialMatch(map[string]string{ControllerLabel: injection.GetControllerName(ctx)})
+	ignoredNodeSelectors := karpopts.FromContext(ctx).IgnoredNodeSelectorRequirements.Keys
 	for _, p := range pods {
-		s.updateCachedPodData(p)
+		s.updateCachedPodData(p, ignoredNodeSelectors)
 	}
 	q := NewQueue(pods, s.cachedPodData)
 
@@ -413,7 +416,7 @@ func (s *Scheduler) Solve(ctx context.Context, pods []*corev1.Pod) (Results, err
 				log.FromContext(ctx).Error(e, "failed updating topology")
 			}
 			// Update the cached podData since the pod was relaxed, and it could have changed its requirement set
-			s.updateCachedPodData(pod)
+			s.updateCachedPodData(pod, ignoredNodeSelectors)
 			q.Push(pod)
 		} else {
 			delete(podErrors, pod)
@@ -460,22 +463,22 @@ func (s *Scheduler) trySchedule(ctx context.Context, p *corev1.Pod) error {
 			log.FromContext(ctx).Error(e, "failed updating topology")
 		}
 		// Update the cached podData since the pod was relaxed, and it could have changed its requirement set
-		s.updateCachedPodData(p)
+		s.updateCachedPodData(p, sets.Set[string]{})
 	}
 }
 
-func (s *Scheduler) updateCachedPodData(p *corev1.Pod) {
+func (s *Scheduler) updateCachedPodData(p *corev1.Pod, ignoredNodeSelectors sets.Set[string]) {
 	var requirements scheduling.Requirements
 	if s.preferencePolicy == PreferencePolicyIgnore {
-		requirements = scheduling.NewStrictPodRequirements(p)
+		requirements = scheduling.NewStrictPodRequirements(p, ignoredNodeSelectors)
 	} else {
-		requirements = scheduling.NewPodRequirements(p)
+		requirements = scheduling.NewPodRequirements(p, ignoredNodeSelectors)
 	}
 	strictRequirements := requirements
 	if scheduling.HasPreferredNodeAffinity(p) {
 		// strictPodRequirements is important as it ensures we don't inadvertently restrict the possible pod domains by a
 		// preferred node affinity.  Only required node affinities can actually reduce pod domains.
-		strictRequirements = scheduling.NewStrictPodRequirements(p)
+		strictRequirements = scheduling.NewStrictPodRequirements(p, ignoredNodeSelectors)
 	}
 	s.cachedPodData[p.UID] = &PodData{
 		Requests:                 resources.RequestsForPods(p),
@@ -709,7 +712,7 @@ func (s *Scheduler) isDaemonPodCompatibleWithNode(p *corev1.Pod, taints []corev1
 	if err := scheduling.Taints(taints).ToleratesPod(p); err != nil {
 		return false
 	}
-	if err := scheduling.NewLabelRequirements(nodeLabels).Compatible(scheduling.NewStrictPodRequirements(p)); err != nil {
+	if err := scheduling.NewLabelRequirements(nodeLabels).Compatible(scheduling.NewStrictPodRequirements(p, sets.Set[string]{})); err != nil {
 		return false
 	}
 	return true
@@ -812,7 +815,7 @@ func isDaemonPodCompatible(nodeClaimTemplate *NodeClaimTemplate, pod *corev1.Pod
 	}
 	for {
 		// We don't consider pod preferences for scheduling requirements since we know that pod preferences won't matter with Daemonset scheduling
-		if nodeClaimTemplate.Requirements.IsCompatible(scheduling.NewStrictPodRequirements(pod), scheduling.AllowUndefinedWellKnownLabels) {
+		if nodeClaimTemplate.Requirements.IsCompatible(scheduling.NewStrictPodRequirements(pod, sets.Set[string]{}), scheduling.AllowUndefinedWellKnownLabels) {
 			return true
 		}
 		// If relaxing the Node Affinity term didn't succeed, then this DaemonSet can't schedule to this NodePool
