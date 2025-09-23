@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/awslabs/operatorpkg/reconciler"
 	"github.com/awslabs/operatorpkg/singleton"
 	"github.com/samber/lo"
 	"go.uber.org/multierr"
@@ -36,7 +37,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	v1 "sigs.k8s.io/karpenter/pkg/apis/v1"
 	disruptionevents "sigs.k8s.io/karpenter/pkg/controllers/disruption/events"
@@ -184,14 +184,14 @@ func (q *Queue) Register(_ context.Context, m manager.Manager) error {
 		Complete(singleton.AsReconciler(q))
 }
 
-func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
+func (q *Queue) Reconcile(ctx context.Context) (reconciler.Result, error) {
 	ctx = injection.WithControllerName(ctx, "disruption.queue")
 
 	// Check if the queue is empty. client-go recommends not using this function to gate the subsequent
 	// get call, but since we're popping items off the queue synchronously retrying, there should be
 	// no synchonization issues.
 	if q.Len() == 0 {
-		return reconcile.Result{RequeueAfter: 1 * time.Second}, nil
+		return reconciler.Result{RequeueAfter: 1 * time.Second}, nil
 	}
 
 	// Get command from queue. This waits until queue is non-empty.
@@ -209,7 +209,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 			// mark this item as done processing. This is necessary so that the RLI is able to add the item back in.
 			q.TypedRateLimitingInterface.Done(cmd)
 			q.TypedRateLimitingInterface.AddRateLimited(cmd)
-			return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
+			return reconciler.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 		}
 		// If the command failed, bail on the action.
 		// 1. Emit metrics for launch failures
@@ -233,7 +233,7 @@ func (q *Queue) Reconcile(ctx context.Context) (reconcile.Result, error) {
 	// If command is complete, remove command from queue.
 	q.Remove(cmd)
 	log.FromContext(ctx).V(1).Info("command succeeded")
-	return reconcile.Result{RequeueAfter: singleton.RequeueImmediately}, nil
+	return reconciler.Result{RequeueAfter: singleton.RequeueImmediately}, nil
 }
 
 // waitOrTerminate will wait until launched nodeclaims are ready.

@@ -23,8 +23,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"sigs.k8s.io/karpenter/kwok/apis/v1alpha1"
@@ -35,7 +35,7 @@ import (
 )
 
 var nodePool *v1.NodePool
-var nodeClass client.Object
+var nodeClass *unstructured.Unstructured
 var env *common.Environment
 
 var testLabels = map[string]string{
@@ -47,14 +47,14 @@ func TestPerf(t *testing.T) {
 	RegisterFailHandler(Fail)
 	BeforeSuite(func() {
 		env = common.NewEnvironment(t)
-		debug.BeforeSuite(env.Context, env.Config, env.Client)
+		debug.BeforeEach(env.Context, env.Config, env.Client)
 	})
 	AfterSuite(func() {
 		// Write out the timestamps from our tests
 		if err := debug.WriteTimestamps(env.OutputDir, env.TimeIntervalCollector); err != nil {
 			log.FromContext(env).Info(fmt.Sprintf("Failed to write timestamps to files, %s", err))
 		}
-		debug.AfterSuite(env.Context, env.Config, env.Client)
+		debug.AfterEach(env.Context)
 		env.Stop()
 	})
 	RunSpecs(t, "Perf")

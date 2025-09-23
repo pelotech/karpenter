@@ -88,7 +88,8 @@ var _ = Describe("Requirement", func() {
 							},
 						},
 					},
-				}),
+				},
+					sets.Set[string]{}),
 			} {
 				Expect(sets.List(r.Keys())).To(ConsistOf(
 					corev1.LabelArchStable,

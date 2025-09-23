@@ -21,6 +21,8 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"path/filepath"
+
 	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 )
 
@@ -242,6 +244,15 @@ func Fits(candidate, total v1.ResourceList) bool {
 		}
 	}
 	return true
+}
+
+func isIgnored(resourceName v1.ResourceName, ignored v1.ResourceList) bool {
+	for pattern := range ignored {
+		if match, _ := filepath.Match(pattern.String(), resourceName.String()); match {
+			return true
+		}
+	}
+	return false
 }
 
 // String returns a string version of the resource list suitable for presenting in a log
