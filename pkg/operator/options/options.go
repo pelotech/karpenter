@@ -21,13 +21,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"os"
 	"strings"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
+	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/samber/lo"
 	cliflag "k8s.io/component-base/cli/flag"
@@ -68,11 +66,6 @@ type FeatureGates struct {
 	StaticCapacity          bool
 }
 
-type IgnoredResourceRequests struct {
-	Keys     v1.ResourceList
-	inputStr string
-}
-
 type IgnoredNodeSelectorPatterns struct {
 	Keys     sets.Set[string]
 	inputStr string
@@ -103,8 +96,7 @@ type Options struct {
 	MinValuesPolicy                  MinValuesPolicy
 	IgnoreDRARequests                bool // NOTE: This flag will be removed once formal DRA support is GA in Karpenter.
 	FeatureGates                     FeatureGates
-	IgnoredResourceRequests         IgnoredResourceRequests
-	IgnoredNodeSelectorRequirements IgnoredNodeSelectorPatterns
+	IgnoredNodeSelectorRequirements  IgnoredNodeSelectorPatterns
 }
 
 type FlagSet struct {
@@ -146,7 +138,6 @@ func (o *Options) AddFlags(fs *FlagSet) {
 	fs.StringVar(&o.minValuesPolicyRaw, "min-values-policy", env.WithDefaultString("MIN_VALUES_POLICY", string(MinValuesPolicyStrict)), "Min values policy for scheduling. Options include 'Strict' for existing behavior where min values are strictly enforced or 'BestEffort' where Karpenter relaxes min values when it isn't satisfied.")
 	fs.BoolVarWithEnv(&o.IgnoreDRARequests, "ignore-dra-requests", "IGNORE_DRA_REQUESTS", true, "When set, Karpenter will ignore pods' DRA requests during scheduling simulations. NOTE: This flag will be removed once formal DRA support is GA in Karpenter.")
 	fs.StringVar(&o.FeatureGates.inputStr, "feature-gates", env.WithDefaultString("FEATURE_GATES", "NodeRepair=false,ReservedCapacity=true,SpotToSpotConsolidation=false,NodeOverlay=false,StaticCapacity=false"), "Optional features can be enabled / disabled using feature gates. Current options are: NodeRepair, ReservedCapacity, SpotToSpotConsolidation, NodeOverlay, and StaticCapacity.")
-	fs.StringVar(&o.IgnoredResourceRequests.inputStr, "ignored-resource-requests", env.WithDefaultString("IGNORED_RESOURCE_REQUESTS", ""), "List of resource requests ignored when electing a resource. Items are comma-separated.")
 	fs.StringVar(&o.IgnoredNodeSelectorRequirements.inputStr, "ignored-node-selector-requirements", env.WithDefaultString("IGNORED_NODE_SELECTOR_REQUIREMENTS", ""), "List of node selector requirements ignored when electing a resource. Items are comma-separated.")
 }
 
@@ -177,7 +168,6 @@ func (o *Options) Parse(fs *FlagSet, args ...string) error {
 	o.PreferencePolicy = PreferencePolicy(o.preferencePolicyRaw)
 	o.MinValuesPolicy = MinValuesPolicy(o.minValuesPolicyRaw)
 
-	o.IgnoredResourceRequests = ParseIgnoredResourceRequests(o.IgnoredResourceRequests.inputStr)
 	o.IgnoredNodeSelectorRequirements = ParseIgnoredNodeSelectorRequirements(o.IgnoredNodeSelectorRequirements.inputStr)
 
 	return nil
@@ -223,22 +213,6 @@ func ParseFeatureGates(gateStr string) (FeatureGates, error) {
 	}
 
 	return gates, nil
-}
-
-func ParseIgnoredResourceRequests(inputStr string) IgnoredResourceRequests {
-	ignoredResourceRequests := strings.Split(inputStr, ",")
-	keys := make(v1.ResourceList)
-
-	// NOTE: Dummy value as quantity, resource request filtering is happening only against the key we want to ignore.
-	q, _ := resource.ParseQuantity("1")
-	for _, v := range ignoredResourceRequests {
-		keys[v1.ResourceName(v)] = q
-	}
-
-	return IgnoredResourceRequests{
-		Keys:     keys,
-		inputStr: inputStr,
-	}
 }
 
 func ParseIgnoredNodeSelectorRequirements(inputStr string) IgnoredNodeSelectorPatterns {

@@ -25,9 +25,6 @@ import (
 	"testing"
 	"time"
 
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
-
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/samber/lo"
@@ -130,9 +127,6 @@ var _ = Describe("Options", func() {
 					StaticCapacity:          lo.ToPtr(false),
 				},
 				IgnoreDRARequests: lo.ToPtr(true),
-				IgnoredResourceRequests: &options.IgnoredResourceRequests{
-					Keys: make(v1.ResourceList),
-				},
 			}))
 		})
 
@@ -190,10 +184,6 @@ var _ = Describe("Options", func() {
 					StaticCapacity:          lo.ToPtr(true),
 				},
 				IgnoreDRARequests: lo.ToPtr(true),
-				IgnoredResourceRequests: &options.IgnoredResourceRequests{Keys: v1.ResourceList{
-					"devices.kubevirt.io/tun": resource.MustParse("1"),
-					"devices.kubevirt.io/kvm": resource.MustParse("1"),
-				}},
 			}))
 		})
 
@@ -251,7 +241,6 @@ var _ = Describe("Options", func() {
 					StaticCapacity:          lo.ToPtr(true),
 				},
 				IgnoreDRARequests: lo.ToPtr(true),
-				IgnoredResourceRequests: &options.IgnoredResourceRequests{Keys: v1.ResourceList{}},
 			}))
 		})
 
@@ -310,9 +299,6 @@ var _ = Describe("Options", func() {
 					StaticCapacity:          lo.ToPtr(true),
 				},
 				IgnoreDRARequests: lo.ToPtr(true),
-				IgnoredResourceRequests: &options.IgnoredResourceRequests{
-					Keys: make(v1.ResourceList),
-				},
 			}))
 		})
 

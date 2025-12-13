@@ -17,10 +17,7 @@ limitations under the License.
 package scheduling
 
 import (
-	"context"
 	"fmt"
-
-	opts "sigs.k8s.io/karpenter/pkg/operator/options"
 
 	v1 "k8s.io/api/core/v1"
 
@@ -70,7 +67,7 @@ func NewExistingNode(n *state.StateNode, topology *Topology, taints []v1.Taint, 
 // CanAdd returns whether the pod can be added to the ExistingNode
 // based on the taints/tolerations, volume requirements, host port compatibility,
 // requirements, resources, and topology requirements
-func (n *ExistingNode) CanAdd(ctx context.Context, pod *v1.Pod, podData *PodData, volumes scheduling.Volumes) (updatedRequirements scheduling.Requirements, err error) {
+func (n *ExistingNode) CanAdd(pod *v1.Pod, podData *PodData, volumes scheduling.Volumes) (updatedRequirements scheduling.Requirements, err error) {
 	// Check Taints
 	if err := scheduling.Taints(n.cachedTaints).ToleratesPod(pod); err != nil {
 		return nil, err
@@ -85,7 +82,7 @@ func (n *ExistingNode) CanAdd(ctx context.Context, pod *v1.Pod, podData *PodData
 	}
 	// check resource requests first since that's a pretty likely reason the pod won't schedule on an in-flight
 	// node, which at this point can't be increased in size
-	if !resources.Fits(podData.Requests, n.remainingResources, opts.FromContext(ctx).IgnoredResourceRequests.Keys) {
+	if !resources.Fits(podData.Requests, n.remainingResources) {
 		return nil, fmt.Errorf("exceeds node resources")
 	}
 	// Check NodeClaim Affinity Requirements

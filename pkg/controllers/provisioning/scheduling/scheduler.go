@@ -146,7 +146,7 @@ func NewScheduler(
 	templates := lo.FilterMap(nodePools, func(np *v1.NodePool, _ int) (*NodeClaimTemplate, bool) {
 		var err error
 		nct := NewNodeClaimTemplate(np)
-		nct.InstanceTypeOptions, _, err = filterInstanceTypesByRequirements(instanceTypes[np.Name], nct.Requirements, corev1.ResourceList{}, corev1.ResourceList{}, corev1.ResourceList{}, minValuesPolicy == karpopts.MinValuesPolicyBestEffort, mOpts.FromContext(ctx).IgnoredResourceRequests.Keys)
+		nct.InstanceTypeOptions, _, err = filterInstanceTypesByRequirements(instanceTypes[np.Name], nct.Requirements, corev1.ResourceList{}, corev1.ResourceList{}, corev1.ResourceList{}, minValuesPolicy == karpopts.MinValuesPolicyBestEffort)
 		if len(nct.InstanceTypeOptions) == 0 {
 			if instanceTypeFilterErr, ok := lo.ErrorsAs[InstanceTypeFilterError](err); ok && instanceTypeFilterErr.minValuesIncompatibleErr != nil {
 				recorder.Publish(NoCompatibleInstanceTypes(np, true))
@@ -529,7 +529,7 @@ func (s *Scheduler) addToExistingNode(ctx context.Context, pod *corev1.Pod) erro
 		return err
 	}
 	parallelizeUntil(s.numConcurrentReconciles, len(s.existingNodes), func(i int) bool {
-		r, err := s.existingNodes[i].CanAdd(ctx, pod, s.cachedPodData[pod.UID], volumes)
+		r, err := s.existingNodes[i].CanAdd(pod, s.cachedPodData[pod.UID], volumes)
 		if err == nil {
 			mu.Lock()
 			defer mu.Unlock()

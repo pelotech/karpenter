@@ -143,7 +143,7 @@ func (n *NodeClaim) CanAdd(ctx context.Context, pod *corev1.Pod, podData *PodDat
 	// Check instance type combinations
 	requests := resources.Merge(n.Spec.Resources.Requests, podData.Requests)
 
-	remaining, unsatisfiableKeys, err := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, podData.Requests, n.daemonResources, requests, relaxMinValues, opts.FromContext(ctx).IgnoredResourceRequests.Keys)
+	remaining, unsatisfiableKeys, err := filterInstanceTypesByRequirements(n.InstanceTypeOptions, nodeClaimRequirements, podData.Requests, n.daemonResources, requests, relaxMinValues)
 	if relaxMinValues {
 		// Update min values on the requirements if they are relaxed
 		for key, minValues := range unsatisfiableKeys {
@@ -370,7 +370,7 @@ func (e InstanceTypeFilterError) Error() string {
 }
 
 //nolint:gocyclo
-func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, podRequests, daemonRequests, totalRequests corev1.ResourceList, relaxMinValues bool, ignored corev1.ResourceList) (cloudprovider.InstanceTypes, map[string]int, error) {
+func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceType, requirements scheduling.Requirements, podRequests, daemonRequests, totalRequests corev1.ResourceList, relaxMinValues bool) (cloudprovider.InstanceTypes, map[string]int, error) {
 	unsatisfiableKeys := map[string]int{}
 	// We hold the results of our scheduling simulation inside of this InstanceTypeFilterError struct
 	// to reduce the CPU load of having to generate the error string for a failed scheduling simulation
@@ -393,7 +393,7 @@ func filterInstanceTypesByRequirements(instanceTypes []*cloudprovider.InstanceTy
 		// the tradeoff to not short-circuiting on the filtering is that we can report much better error messages
 		// about why scheduling failed
 		itCompat := compatible(it, requirements)
-		itFits := fits(it, totalRequests, ignored)
+		itFits := fits(it, totalRequests)
 
 		// By using this iterative approach vs. the Available() function it prevents allocations
 		// which have to be garbage collected and slow down Karpenter's scheduling algorithm
@@ -444,6 +444,6 @@ func compatible(instanceType *cloudprovider.InstanceType, requirements schedulin
 	return instanceType.Requirements.Intersects(requirements) == nil
 }
 
-func fits(instanceType *cloudprovider.InstanceType, requests corev1.ResourceList, ignored corev1.ResourceList) bool {
-	return resources.Fits(requests, instanceType.Allocatable(), ignored)
+func fits(instanceType *cloudprovider.InstanceType, requests corev1.ResourceList) bool {
+	return resources.Fits(requests, instanceType.Allocatable())
 }

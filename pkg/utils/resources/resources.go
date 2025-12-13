@@ -20,7 +20,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	resourcehelper "k8s.io/component-helpers/resource"
-	"path/filepath"
 
 	"sigs.k8s.io/karpenter/pkg/utils/pretty"
 )
@@ -148,7 +147,7 @@ func Cmp(lhs resource.Quantity, rhs resource.Quantity) int {
 }
 
 // Fits returns true if the candidate set of resources is less than or equal to the total set of resources.
-func Fits(candidate, total, ignored v1.ResourceList) bool {
+func Fits(candidate, total v1.ResourceList) bool {
 	// If any of the total resource values are negative then the resource will never fit
 	for _, quantity := range total {
 		if Cmp(*resource.NewScaledQuantity(0, resource.Kilo), quantity) > 0 {
@@ -156,23 +155,11 @@ func Fits(candidate, total, ignored v1.ResourceList) bool {
 		}
 	}
 	for resourceName, quantity := range candidate {
-		if isIgnored(resourceName, ignored) {
-			continue
-		}
 		if Cmp(quantity, total[resourceName]) > 0 {
 			return false
 		}
 	}
 	return true
-}
-
-func isIgnored(resourceName v1.ResourceName, ignored v1.ResourceList) bool {
-	for pattern := range ignored {
-		if match, _ := filepath.Match(pattern.String(), resourceName.String()); match {
-			return true
-		}
-	}
-	return false
 }
 
 // String returns a string version of the resource list suitable for presenting in a log
