@@ -64,6 +64,7 @@ var _ = Describe("Options", func() {
 		"PREFERENCE_POLICY",
 		"MIN_VALUES_POLICY",
 		"FEATURE_GATES",
+		"IGNORED_RESOURCE_REQUESTS",
 	}
 
 	BeforeEach(func() {
@@ -153,6 +154,7 @@ var _ = Describe("Options", func() {
 				"--preference-policy", "Ignore",
 				"--min-values-policy", "BestEffort",
 				"--feature-gates", "ReservedCapacity=false,SpotToSpotConsolidation=true,NodeRepair=true,NodeOverlay=true,StaticCapacity=true",
+				"--ignored-resource-requests", "devices.kubevirt.io/tun,devices.kubevirt.io/kvm",
 			)
 			Expect(err).To(BeNil())
 			expectOptionsMatch(opts, test.Options(test.OptionsFields{
@@ -205,6 +207,7 @@ var _ = Describe("Options", func() {
 			os.Setenv("PREFERENCE_POLICY", "Ignore")
 			os.Setenv("MIN_VALUES_POLICY", "BestEffort")
 			os.Setenv("FEATURE_GATES", "ReservedCapacity=false,SpotToSpotConsolidation=true,NodeRepair=true,NodeOverlay=true,StaticCapacity=true")
+			os.Setenv("IGNORED_RESOURCE_REQUESTS", "devices.kubevirt.io/tun")
 			fs = &options.FlagSet{
 				FlagSet: flag.NewFlagSet("karpenter", flag.ContinueOnError),
 			}
