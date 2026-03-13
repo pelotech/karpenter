@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"strings"
 	"time"
 
@@ -515,7 +516,7 @@ var KarpenterManagedLabelDoesNotExistError = serrors.Wrap(fmt.Errorf("configured
 // validateKarpenterManagedLabelCanExist provides a more clear error message in the event of scheduling a pod that specifically doesn't
 // want to run on a Karpenter node (e.g. a Karpenter controller replica).
 func validateKarpenterManagedLabelCanExist(p *corev1.Pod) error {
-	for _, req := range scheduling.NewPodRequirements(p) {
+	for _, req := range scheduling.NewPodRequirements(p, sets.Set[string]{}) {
 		if req.Key == v1.NodePoolLabelKey && req.Operator() == corev1.NodeSelectorOpDoesNotExist {
 			return KarpenterManagedLabelDoesNotExistError
 		}
