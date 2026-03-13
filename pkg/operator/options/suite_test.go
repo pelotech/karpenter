@@ -64,6 +64,7 @@ var _ = Describe("Options", func() {
 		"PREFERENCE_POLICY",
 		"MIN_VALUES_POLICY",
 		"FEATURE_GATES",
+		"IGNORED_RESOURCE_REQUESTS",
 	}
 
 	BeforeEach(func() {
